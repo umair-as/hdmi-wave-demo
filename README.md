@@ -8,7 +8,7 @@ that cycle every 45 seconds. It is written in C with
 and the same code runs under Wayland (Weston), directly on DRM/KMS without a
 compositor, or in a window on a Linux PC.
 
-![Fourier epicycles drawing the project mark and signature](docs/shots/scene3.png)
+![Fourier epicycles redrawing the project mark](docs/gifs/scene3.gif)
 
 ## Scenes
 
@@ -34,6 +34,11 @@ SoC temperature.
 | ![scene 7](docs/shots/scene7.png) | ![scene 8](docs/shots/scene8.png) | ![scene 9](docs/shots/scene9.png) |
 
 *Rendered with `--headless-shot`: 1920x1080, 30 s into each scene.*
+
+Scene 9, where three Lorenz trajectories started 1e-4 apart split onto
+different wings:
+
+![Lorenz attractor trajectories diverging](docs/gifs/scene9.gif)
 
 ## Build
 
@@ -83,6 +88,8 @@ hdmi-wave-demo [options]
   --seed N            seed for the random parts (default 12345)
   --render WxH        draw at a fixed size offscreen and scale it to the window
   --headless-shot DIR write DIR/sceneN.png for every scene and exit
+  --record DIR        write one scene as a PNG sequence (20 fps) and exit
+  --start SECONDS     --record: scene time to start at
   --duration SECONDS  quit after SECONDS
   --stats             print frame-time statistics
 ```
@@ -145,6 +152,7 @@ cmake --build build
 
 ./build/hdmi-wave-demo --headless-shot docs/shots
 python3 tools/check_shots.py docs/shots      # every shot has real content
+tools/make_gifs.sh                           # docs/gifs/*.gif (needs ffmpeg)
 
 ./build/hdmi-wave-demo --render 1920x1080 --scene 8 --mute --stats --duration 10
 ```
@@ -156,20 +164,23 @@ python3 tools/check_shots.py docs/shots      # every shot has real content
 - `tools/check_path.py` checks a single closed SVG path and can render a
   preview.
 
-To add a scene, write `src/scene_<name>.c` exporting a `Scene` (see
-`src/scene.h`), then list it in `src/scenes.c` and in `HWD_SCENES` in
-`CMakeLists.txt`.
+```
+CMakeLists.txt          project, options, subdirectories
+cmake/                  options, raylib (fetched or system), warning flags
+src/main.c              command line, main loop, overlay, headless rendering
+src/core/               shared settings and PRNG, drawing helpers and palette
+src/devices/            audio output, USB microphone, SoC temperature
+src/maths/              FFT and SVG loader: library hwd_maths, no raylib
+src/scenes/             scene interface, attract-mode order, one file per scene
+tests/                  unit tests against hwd_maths
+tools/                  screenshot check, SVG path check, GIF script
+assets/, docs/          SVGs for scene 3, screenshots and GIFs
+```
 
-```
-src/main.c              command line, main loop, overlay, screenshots, stats
-src/scene.h, scenes.c   scene interface and attract-mode order
-src/scene_*.c           one file per scene
-src/fft.c               radix-2 FFT, reference DFT, Hann window
-src/svgpath.c           SVG loader and arc-length resampling
-src/audio.c, mic.c      synthesised output, USB microphone capture
-src/thermal.c, draw.c   SoC temperature, drawing helpers and palette
-tests/, tools/          unit tests, screenshot and path checks
-```
+To add a scene, write `src/scenes/<name>.c` exporting a `Scene` (see
+`src/scenes/scene.h`), add it to the table in `src/scenes/scenes.c` and to
+the executable's sources in `src/CMakeLists.txt`. `BUILD_TESTING=OFF` skips
+the tests (distro builds).
 
 ### Status
 

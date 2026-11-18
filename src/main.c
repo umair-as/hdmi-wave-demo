@@ -19,6 +19,9 @@
 #define SHOT_H 1080
 #define SHOT_FRAMES 120
 #define SHOT_DT 0.25f      /* 120 x 0.25 s = 30 s of scene time per shot */
+#define REC_FPS 20         /* --record frame rate (GIF delays are in 1/100 s) */
+#define REC_W 960
+#define REC_H 540
 
 static volatile sig_atomic_t quit_signal;
 
@@ -37,6 +40,8 @@ typedef struct Options {
     bool fullscreen;
     int win_w, win_h;
     const char *shot_dir;
+    const char *record_dir;
+    float start;            /* --record: scene time to start at */
     float duration;         /* exit after this many seconds (0 = run forever) */
     int render_w, render_h; /* fixed internal render size, scaled to the window (0 = window size) */
     bool stats;
@@ -54,11 +59,14 @@ static void usage(FILE *f)
         "  --svg FILE[#ID]     shapes for the epicycle scene (repeatable)\n"
         "  --seed N            seed for the random parts (default 12345)\n"
         "  --headless-shot DIR render %d frames per scene at %dx%d, write DIR/sceneN.png, exit\n"
+        "  --record DIR        write the --scene as DIR/frame_NNNN.png at %d fps (size: --render,\n"
+        "                      default %dx%d; length: --duration, default 6 s), exit\n"
+        "  --start SECONDS     --record: begin at this scene time (default 0)\n"
         "  --duration SECONDS  quit after SECONDS (tests, benchmarks)\n"
         "  --render WxH        draw at a fixed WxH offscreen and scale to the window\n"
         "  --stats             print frame-time statistics (per second, and per scene on change/exit)\n"
         "keys: 1-%d scene, SPACE pause, LEFT/RIGHT prev/next, ESC quit\n",
-        hwd_scene_count, SHOT_FRAMES, SHOT_W, SHOT_H, hwd_scene_count);
+        hwd_scene_count, SHOT_FRAMES, SHOT_W, SHOT_H, REC_FPS, REC_W, REC_H, hwd_scene_count);
 }
 
 static int parse_args(int argc, char **argv, Options *o)
@@ -98,6 +106,13 @@ static int parse_args(int argc, char **argv, Options *o)
         } else if (!strcmp(a, "--headless-shot")) {
             NEED_VALUE();
             o->shot_dir = v;
+        } else if (!strcmp(a, "--record")) {
+            NEED_VALUE();
+            o->record_dir = v;
+        } else if (!strcmp(a, "--start")) {
+            NEED_VALUE();
+            o->start = (float)atof(v);
+            if (!(o->start >= 0)) { fprintf(stderr, "bad --start %s\n", v); return -1; }
         } else if (!strcmp(a, "--duration")) {
             NEED_VALUE();
             o->duration = (float)atof(v);
@@ -173,17 +188,54 @@ static void stats_flush(int idx, int w, int h)
     stats.n = 0;
 }
 
-/* ---- headless screenshots -------------------------------------------- */
+/* ---- headless rendering ---------------------------------------------- */
 
-static int headless_shots(const char *dir)
+/* A hidden window for the GL context; frames go to an offscreen target. */
+static bool headless_begin(int w, int h, const char *dir, RenderTexture2D *rt)
 {
     g_app.headless = true;
     mkdir(dir, 0755);
     SetConfigFlags(FLAG_WINDOW_HIDDEN);
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(320, 180, "hdmi-wave-demo (headless)");
-    if (!IsWindowReady()) { fprintf(stderr, "headless: no GL context\n"); return 1; }
-    RenderTexture2D rt = LoadRenderTexture(SHOT_W, SHOT_H);
+    if (!IsWindowReady()) { fprintf(stderr, "headless: no GL context\n"); return false; }
+    *rt = LoadRenderTexture(w, h);
+    return true;
+}
+
+static void headless_end(RenderTexture2D rt)
+{
+    UnloadRenderTexture(rt);
+    CloseWindow();
+}
+
+static void render_frame(RenderTexture2D rt, int idx, float scene_t, const char *label)
+{
+    BeginTextureMode(rt);
+    ClearBackground(COL_BG);
+    hwd_scenes[idx]->draw(rt.texture.width, rt.texture.height);
+    draw_overlay(idx, rt.texture.width, rt.texture.height, scene_t, false, label, GetTime());
+    EndTextureMode();
+}
+
+static bool export_frame(RenderTexture2D rt, const char *path)
+{
+    Image img = LoadImageFromTexture(rt.texture);
+    ImageFlipVertical(&img);
+    /* Blending semi-transparent shapes into the target also lowers its
+     * alpha; the screen ignores that, so drop it from the file too. */
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+    bool ok = ExportImage(img, path);
+    UnloadImage(img);
+    if (!ok) fprintf(stderr, "headless: cannot write %s\n", path);
+    return ok;
+}
+
+/* --headless-shot: one PNG per scene, SHOT_FRAMES fixed steps in */
+static int headless_shots(const char *dir)
+{
+    RenderTexture2D rt;
+    if (!headless_begin(SHOT_W, SHOT_H, dir, &rt)) return 1;
     int rc = 0;
     for (int i = 0; i < hwd_scene_count && !rc; i++) {
         const Scene *s = hwd_scenes[i];
@@ -192,23 +244,43 @@ static int headless_shots(const char *dir)
         for (int f = 0; f < SHOT_FRAMES; f++) {
             s->update(SHOT_DT);
             t += SHOT_DT;
-            BeginTextureMode(rt);
-            ClearBackground(COL_BG);
-            s->draw(SHOT_W, SHOT_H);
-            draw_overlay(i, SHOT_W, SHOT_H, t, false, "fixed dt", GetTime());
-            EndTextureMode();
+            render_frame(rt, i, t, "fixed dt");
         }
-        Image img = LoadImageFromTexture(rt.texture);
-        ImageFlipVertical(&img);
         char path[1024];
         snprintf(path, sizeof path, "%s/scene%d.png", dir, i + 1);
-        if (!ExportImage(img, path)) { fprintf(stderr, "headless: cannot write %s\n", path); rc = 1; }
+        if (!export_frame(rt, path)) rc = 1;
         else printf("headless: wrote %s\n", path);
-        UnloadImage(img);
         s->unload();
     }
-    UnloadRenderTexture(rt);
-    CloseWindow();
+    headless_end(rt);
+    return rc;
+}
+
+/* --record: a PNG sequence of one scene at REC_FPS, for the README GIFs */
+static int headless_record(const Options *o)
+{
+    int w = o->render_w ? o->render_w : REC_W, h = o->render_w ? o->render_h : REC_H;
+    int frames = (int)lroundf((o->duration > 0 ? o->duration : 6.0f) * REC_FPS);
+    const float dt = 1.0f / REC_FPS;
+    RenderTexture2D rt;
+    if (!headless_begin(w, h, o->record_dir, &rt)) return 1;
+    const Scene *s = hwd_scenes[o->scene];
+    s->init();
+    float t = 0;
+    while (t + dt / 2 < o->start) { s->update(dt); t += dt; }   /* same steps as recorded */
+    int rc = 0;
+    for (int f = 0; f < frames && !rc; f++) {
+        s->update(dt);
+        t += dt;
+        render_frame(rt, o->scene, t, "20 fps");
+        char path[1024];
+        snprintf(path, sizeof path, "%s/frame_%04d.png", o->record_dir, f);
+        if (!export_frame(rt, path)) rc = 1;
+    }
+    if (!rc) printf("headless: scene %d, t = %.2f..%.2f s, %d frames at %dx%d in %s\n",
+                    o->scene + 1, o->start, t, frames, w, h, o->record_dir);
+    s->unload();
+    headless_end(rt);
     return rc;
 }
 
@@ -219,6 +291,7 @@ int main(int argc, char **argv)
     Options o;
     if (parse_args(argc, argv, &o)) return 2;
     if (o.shot_dir) return headless_shots(o.shot_dir);
+    if (o.record_dir) return headless_record(&o);
 
     struct sigaction sa = { .sa_handler = on_signal };
     sigemptyset(&sa.sa_mask);
