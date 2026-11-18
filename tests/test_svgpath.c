@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../src/svgpath.h"
+#include "svgpath.h"
 
 #define JUMP 1.5
 

@@ -1,6 +1,7 @@
-/* Scene interface. Each scene is one scene_*.c file exporting one Scene;
+/* Scene interface. Each scene is one src/scenes/<name>.c file exporting one Scene;
  * scenes.c lists them in attract-mode order. Nothing else in the program
- * knows a scene by its id: adding a scene = one new file + one table entry.
+ * knows a scene by its id: adding a scene = one new file, one table entry and
+ * one line in src/CMakeLists.txt.
  *
  * init:   called when the scene becomes current (state is reset each time)
  * update: advance by dt seconds (fixed or measured); never called while paused

@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/fft.h"
+#include "fft.h"
 
 #define TOL 1e-9
 
