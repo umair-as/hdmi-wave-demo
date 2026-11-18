@@ -129,7 +129,10 @@ set(HWD_SCENES
     src/scene_epicycles.c
     src/scene_standing.c
     src/scene_spectrogram.c
-    src/scene_pendulum.c)
+    src/scene_pendulum.c
+    src/scene_lissajous.c
+    src/scene_interference.c
+    src/scene_lorenz.c)
 
 add_executable(hdmi-wave-demo
     src/main.c src/scenes.c src/app.c src/audio.c src/mic.c src/thermal.c

@@ -37,7 +37,7 @@ def check(path, a):
 
 ap = argparse.ArgumentParser()
 ap.add_argument('dir')
-ap.add_argument('--expect', type=int, default=6, help='number of PNGs required')
+ap.add_argument('--expect', type=int, default=9, help='number of PNGs required')
 ap.add_argument('--min-std', type=float, default=4.0)
 ap.add_argument('--min-colours', type=int, default=2)
 ap.add_argument('--min-pixels', type=int, default=200)
